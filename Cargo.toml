@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bstr = "1.5.0"
+miette = "5.9.0"
+thiserror = "1.0.40"
+
+[dev-dependencies]
+assert_matches = "1.5.0"
