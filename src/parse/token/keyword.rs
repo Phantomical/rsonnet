@@ -1,6 +1,6 @@
 use std::fmt;
 
-use miette::SourceSpan;
+use miette::{SourceOffset, SourceSpan};
 
 use crate::parse::token::Ident;
 use crate::parse::{Parse, ParseErrorCode, ParseResult, Parser};
@@ -12,16 +12,17 @@ macro_rules! keywords {
     )*} => {
         $(
             $( #[$attr] )*
-            #[derive(Copy, Clone, Debug)]
-            pub struct $name(SourceSpan);
+            #[derive(Copy, Clone)]
+            pub struct $name(SourceOffset);
 
             impl $name {
-                pub fn span(&self) -> SourceSpan {
-                    self.0
+                pub fn new(span: SourceSpan) -> Self {
+                    assert_eq!(span.len(), $kw.len());
+                    Self(span.offset().into())
                 }
 
-                pub fn set_span(&mut self, span: SourceSpan) {
-                    self.0 = span;
+                pub fn span(&self) -> SourceSpan {
+                    SourceSpan::new(self.0, $kw.len().into())
                 }
             }
 
@@ -30,7 +31,7 @@ macro_rules! keywords {
                     let ident = Ident::parse_any(p)?;
 
                     match ident.value() {
-                        $kw => Ok(Self(ident.span())),
+                        $kw => Ok(Self::new(ident.span())),
                         _ => Err(p.error(ParseErrorCode::UnexpectedToken {
                             span: ident.span(),
                             expected: concat!("`", $kw, "`"),
@@ -42,6 +43,20 @@ macro_rules! keywords {
             impl fmt::Display for $name {
                 fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                     f.write_str($kw)
+                }
+            }
+
+            impl fmt::Debug for $name {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    let span = self.span();
+                    
+                    write!(
+                        f,
+                        "{}({}..{})",
+                        stringify!($name),
+                        span.offset(),
+                        span.offset() + span.len(),
+                    )
                 }
             }
         )*

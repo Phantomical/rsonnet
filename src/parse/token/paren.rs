@@ -2,24 +2,19 @@ use miette::SourceSpan;
 
 use super::*;
 use crate::parse::{ParseResult, Parser};
+use crate::spanext::SpanExt;
 
 macro_rules! paren {
     ($name:ident => [$left:ident, $right:ident]) => {
         #[derive(Copy, Clone, Debug)]
         pub struct $name {
-            open: SourceSpan,
-            close: SourceSpan,
+            open: $left,
+            close: $right,
         }
 
         impl $name {
             pub fn span(&self) -> SourceSpan {
-                let start = usize::min(self.open.offset(), self.close.offset());
-                let end = usize::max(
-                    self.open.offset() + self.open.len(),
-                    self.close.offset() + self.close.len(),
-                );
-
-                (start..end).into()
+                self.open.span().join(self.close.span())
             }
 
             pub fn parse<'p, F, R>(p: &mut Parser<'p>, func: F) -> ParseResult<'p, (Self, R)>
@@ -31,13 +26,7 @@ macro_rules! paren {
                 let inner = func(p)?;
                 let close: $right = p.parse()?;
 
-                Ok((
-                    Self {
-                        open: open.span(),
-                        close: close.span(),
-                    },
-                    inner,
-                ))
+                Ok((Self { open, close }, inner))
             }
         }
     };

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use miette::SourceSpan;
+use miette::{SourceOffset, SourceSpan};
 
 use crate::lexer::Token;
 use crate::parse::error::ParseErrorCode;
@@ -13,23 +13,24 @@ macro_rules! operators {
     )*} => {
         $(
             $( #[$attr] )*
-            #[derive(Copy, Clone, Debug)]
-            pub struct $name(SourceSpan);
+            #[derive(Copy, Clone)]
+            pub struct $name(SourceOffset);
 
             impl $name {
-                pub fn span(&self) -> SourceSpan {
-                    self.0
+                pub fn new(span: SourceSpan) -> Self {
+                    assert_eq!(span.len(), $op.len());
+                    Self(span.offset().into())
                 }
 
-                pub fn set_span(&mut self, span: SourceSpan) {
-                    self.0 = span;
+                pub fn span(&self) -> SourceSpan {
+                    SourceSpan::new(self.0, $op.len().into())
                 }
             }
 
             impl<'p> Parse<'p> for $name {
                 fn parse(p: &mut Parser<'p>) -> ParseResult<'p, Self> {
                     match p.parse_token()? {
-                        Token::Operator { span, operator: $op } => Ok(Self(span)),
+                        Token::Operator { span, operator: $op } => Ok(Self::new(span)),
                         token => Err(p.error(ParseErrorCode::UnexpectedToken {
                             span: token.span(),
                             expected: concat!("`", $op, "`")
@@ -41,6 +42,20 @@ macro_rules! operators {
             impl fmt::Display for $name {
                 fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                     f.write_str($op)
+                }
+            }
+
+            impl fmt::Debug for $name {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    let span = self.span();
+                    
+                    write!(
+                        f,
+                        "{}({}..{})",
+                        stringify!($name),
+                        span.offset(),
+                        span.offset() + span.len(),
+                    )
                 }
             }
         )*
