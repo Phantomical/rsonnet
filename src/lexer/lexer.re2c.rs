@@ -55,7 +55,7 @@ pub(super) fn lexer(input: &str) -> (&str, SourceSpan, RawToken) {
             comment      = inline_c | block_c;
             whitespace   = comment | [ \t\r\n];
 
-            op_p     = [!$:~+&=<>%] | "^" | "-"; // op chars without /, |, or *
+            op_p     = [!$~+&=<>%] | "^" | "-";  // op chars without /, |, or *
             op_c     = op_p | [/|*];             // all operator chars
             op_s     = op_p | "*";               // op chars without / or |
             // an operator is any sequence of op_c that does not contain any of
@@ -93,6 +93,7 @@ pub(super) fn lexer(input: &str) -> (&str, SourceSpan, RawToken) {
             @s op_s+ / "|||"         { break 'outer s }
             @s op_s* "/" / [^*/]     { break 'outer s }
             @s op_s* "|"{1,2} / [^|] { break 'outer s }
+            @s ":"+                  { break 'outer s }
 
             $ { return (&input[cursor..], span(cursor, cursor), Eof) }
             * { return (&input[cursor..], span(cursor, input.len()), Unknown(&input[cursor..])) }

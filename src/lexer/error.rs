@@ -75,6 +75,10 @@ impl<'p> LexerError<'p> {
     pub(super) fn new(source: &'p str, code: LexerErrorCode<'p>) -> Self {
         Self { source, code }
     }
+
+    pub fn is_eof(&self) -> bool {
+        matches!(self.code, LexerErrorCode::Eof)
+    }
 }
 
 impl fmt::Display for LexerError<'_> {

@@ -143,6 +143,11 @@ parse_test! {
             assert_eq!(span.len(), "bl ah".len());
         }
     }
+
+    plus_vis => match "+:::" {
+        Ok(Token::Operator { operator: "+", .. }),
+        Ok(Token::Operator { operator: ":::", .. })
+    }
 }
 
 // #[test]
