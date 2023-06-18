@@ -216,8 +216,8 @@ impl<'p> Lexer<'p> {
 
             match text.as_bytes() {
                 [] => panic!("lexer returned string with no closing quote"),
-                [c] if *c == quote as _ => break,
-                [c, ..] if *c == quote as _ => panic!("unescaped quote in the middle of a string"),
+                [c] if *c == quote as u8 => break,
+                [c, ..] if *c == quote as u8 => panic!("unescaped quote in the middle of a string"),
                 [b'\\', c @ (b'"' | b'\'' | b'\\' | b'/'), ..] => value.push(*c as char),
                 [b'\\', b'b', ..] => value.push(0x08 as char),
                 [b'\\', b'f', ..] => value.push(0x0C as char),
@@ -311,7 +311,7 @@ impl<'p> Lexer<'p> {
             match text.as_bytes() {
                 [] => unreachable!(),
                 [_] => break,
-                [_, b, ..] if *b == quote as _ => {
+                [_, b, ..] if *b == quote as u8 => {
                     text = text.split_at(2).1;
                     value.push(*b as char);
                 }
