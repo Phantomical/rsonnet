@@ -205,7 +205,7 @@ pub enum Expr<'p> {
     /// Used as part of the desugaring process to embed a reference to an
     /// expression that has already been desugared.
     Embed {
-        index: crate::ir::ExprRef,
+        index: crate::mir::ExprRef,
         span: SourceSpan,
     },
 
