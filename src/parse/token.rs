@@ -55,6 +55,10 @@ impl<'p> String<'p> {
         &self.value
     }
 
+    pub fn into_value(self) -> StdString {
+        self.value
+    }
+
     pub fn span(&self) -> SourceSpan {
         self.span
     }

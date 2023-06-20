@@ -1,9 +1,12 @@
+use miette::SourceSpan;
+
 use super::ast::*;
 use super::token::*;
-use super::{Token, TokenKind, TokenSpan, TokenStream};
+use super::{Token, TokenKind, TokenStream};
+use crate::spanext::SpanExt;
 
-fn ts(start: usize, end: usize) -> TokenSpan {
-    TokenSpan::range(start, end)
+fn ts(start: SourceSpan, end: SourceSpan) -> SourceSpan {
+    start.join(end)
 }
 
 peg::parser! {
@@ -12,7 +15,9 @@ peg::parser! {
             = s:p() item:item() e:p()
             { Spanned { item, span: ts(s, e) } }
 
-        rule p() -> usize = quiet! { position!() }
+        rule p() -> SourceSpan
+            = span:##pos_span()
+            { span }
 
         /// Sequence with optional trailing punctuation
         rule punctuated<T, P>(item: rule<T>, punct: rule<P>) -> Vec<T>
@@ -47,7 +52,7 @@ peg::parser! {
         pub rule expr() -> Expr<'p> = precedence! {
             assert:assert()         ";" next:bexpr()
                 { Expr::Assert { assert, next } }
-            "local" b:bind() ++ "," ";" next:bexpr()
+            "local" b:sp(<bind()>) ++ "," ";" next:bexpr()
                 { Expr::Local { locals: b, next } }
             --
             s:sp(<"import" p:string() {p}>)     { Expr::Import { path: s.item, span: s.span } }
@@ -83,8 +88,8 @@ peg::parser! {
             lhs:(@) "<<" rhs:@  { Expr::binop(lhs, rhs, BinOp::Shl) }
             lhs:(@) ">>" rhs:@  { Expr::binop(lhs, rhs, BinOp::Shr) }
             --
-            lhs:(@) "+" rhs:@   { Expr::binop(lhs, rhs, BinOp::Plus) }
-            lhs:(@) "-" rhs:@   { Expr::binop(lhs, rhs, BinOp::Minus) }
+            lhs:(@) "+" rhs:@   { Expr::binop(lhs, rhs, BinOp::Add) }
+            lhs:(@) "-" rhs:@   { Expr::binop(lhs, rhs, BinOp::Sub) }
             --
             lhs:(@) "*" rhs:@   { Expr::binop(lhs, rhs, BinOp::Mul) }
             lhs:(@) "/" rhs:@   { Expr::binop(lhs, rhs, BinOp::Div) }
@@ -100,6 +105,7 @@ peg::parser! {
                 { Expr::Slice { expr: Box::new(e), params } }
             e:(@) a:p() "(" args:args() ")"
                 { Expr::FnCall { func: Box::new(e), args } }
+            e:(@) o:object()    { Expr::Concat { expr: Box::new(e), object: Box::new(Expr::Object(o)) } }
             --
             s:sp(<"null">)      { Expr::Null(s.span) }
             s:sp(<"true">)      { Expr::True(s.span) }
@@ -112,7 +118,7 @@ peg::parser! {
             a:array()           { Expr::Array(a) }
             o:object()          { Expr::Object(o) }
 
-            a:p() "super" "." f:id() b:p() 
+            a:p() "super" "." f:id() b:p()
                 { Expr::SuperField { field: f, span: ts(a, b)} }
             a:p() "super" "[" i:bexpr() "]" b:p()
                 { Expr::SuperIndex { index: i, span: ts(a, b) } }
@@ -138,17 +144,21 @@ peg::parser! {
               l1:objlocal()*
               "[" field:bexpr() "]" ":" value:bexpr()
               l2:("," l:objlocal() {l})* ","?
-              spec:compspec()+
+              forspec:forspec()
+              compspec:compspec()*
               e:p()
             {
                 let mut locals = l1;
                 locals.extend(l2.into_iter());
 
+                let mut spec = compspec;
+                spec.insert(0, CompSpec::For(forspec));
+
                 ObjectComp {
                     locals,
                     field,
                     value,
-                    spec,
+                    compspec: spec,
                     span: ts(s, e)
                 }
             }
@@ -162,8 +172,13 @@ peg::parser! {
             { ArrayPlain { values, span: ts(s, e) } }
 
         rule array_comp() -> ArrayComp<'p>
-            = s:p() "[" expr:bexpr() ","? spec:compspec()+ "]" e:p()
-            { ArrayComp { expr, spec, span: ts(s, e) } }
+            = s:p() "[" expr:bexpr() ","? forspec:forspec() compspec:compspec()* "]" e:p()
+            {
+                let mut spec = compspec;
+                spec.insert(0, CompSpec::For(forspec));
+
+                ArrayComp { expr, compspec: spec, span: ts(s, e) }
+            }
 
         rule member() -> Member<'p>
             = b:objlocal()  { Member::Local(b)  }
@@ -171,10 +186,10 @@ peg::parser! {
             / f:field()     { Member::Field(f)  }
 
         rule field() -> Field<'p>
-            = name:fieldname() inherit:"+"? vis:h() value:bexpr()
-            { Field::Named { name, inherit: inherit.is_some(), vis, value } }
-            / name:fieldname() "(" params:params() ")" vis:h() body:bexpr()
-            { Field::Function { name, params, vis, body } }
+            = s:p() name:fieldname() inherit:"+"? vis:h() value:bexpr() e:p()
+            { Field::Named { name, inherit: inherit.is_some(), vis, value, span: ts(s, e) } }
+            / s:p() name:fieldname() "(" params:params() ")" vis:h() body:bexpr() e:p()
+            { Field::Function { name, params, vis, body, span: ts(s, e) } }
 
         rule h() -> Visibility
             = ":"   { Visibility::Visible }
@@ -185,38 +200,39 @@ peg::parser! {
             = sp(<"local" bind:bind() { bind }>)
 
         rule compspec() -> CompSpec<'p>
-            = forspec:forspec() filters:ifspec()*
-            { CompSpec { forspec, filters } }
+            = forspec:forspec() { CompSpec::For(forspec) }
+            / ifspec:ifspec()   { CompSpec::If(ifspec) }
 
         rule forspec() -> ForSpec<'p>
             = s:p() "for" var:id() "in" expr:bexpr() e:p()
-            { ForSpec { var, expr, span: TokenSpan::range(s, e) } }
+            { ForSpec { var, expr, span: ts(s, e) } }
 
         rule ifspec() -> IfSpec<'p>
             = s:p() "if" cond:bexpr() e:p()
-            { IfSpec { cond, span: TokenSpan::range(s, e) } }
+            { IfSpec { cond, span: ts(s, e) } }
 
         rule fieldname() -> FieldName<'p>
             = n:id()            { FieldName::Name(n)   }
-            / s:string()        { FieldName::String(s) }
+            / s:string()        { FieldName::Expr(Box::new(Expr::String(s))) }
             / "[" e:bexpr() "]" { FieldName::Expr(e)   }
 
         rule assert() -> Assert<'p>
             = s:p() "assert" cond:bexpr() message:(":" m:bexpr() {m})? e:p()
-            { Assert { cond, message, span: TokenSpan::range(s, e) }}
+            { Assert { cond, message, span: ts(s, e) }}
 
         rule bind() -> Bind<'p>
-            = name:id() "=" expr:bexpr() { Bind::Var(BindVar { name, expr })}
-            / name:id() "(" params:params() ")" "=" expr:bexpr()
+            = name:id() "=" expr:expr() { Bind::Var(BindVar { name, expr })}
+            / name:id() "(" params:params() ")" "=" expr:expr()
             { Bind::Fn(BindFn { name, params, expr }) }
 
         rule arg_named() -> NamedArg<'p>
             = name:id() "=" value:expr() { NamedArg { name, value } }
 
         rule args() -> Args<'p>
-            = named:arg_named() ** "," ","? { Args { positional: Vec::new(), named }}
-            / positional:expr() ++ "," named:("," arg:arg_named() {arg})* ","?
-              { Args { positional, named } }
+            = s:p() named:arg_named() ** "," ","? e:p()
+            { Args { positional: Vec::new(), named, span: ts(s, e) }}
+            / s:p() positional:expr() ++ "," named:("," arg:arg_named() {arg})* ","? e:p()
+              { Args { positional, named, span: ts(s, e) } }
 
         rule params() -> Vec<Param<'p>>
             = param:(param:param() ++ "," ","? { param })?

@@ -53,6 +53,10 @@ impl<'p> Parser<'p> {
     pub fn parse_expr(&self) -> ParseResult<'p, Expr<'p>> {
         self::grammar::jsonnet::expr(&self.tokens).map_err(|e| ParseError::new(self, e))
     }
+
+    pub fn span_of(&self, span: &TokenSpan) -> SourceSpan {
+        self.tokens.span_of(span.offset, span.offset + span.len)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +137,7 @@ impl TokenSpan {
 
 pub struct TokenStream<'p> {
     tokens: Vec<Token<'p>>,
+    source: &'p str,
 }
 
 impl<'p> TokenStream<'p> {
@@ -148,11 +153,24 @@ impl<'p> TokenStream<'p> {
             }
         }
 
-        Ok(Self { tokens })
+        Ok(Self {
+            tokens,
+            source: input,
+        })
     }
 
     pub fn as_slice<'i>(&'i self) -> &'i TokenSlice<'p> {
         TokenSlice::new(self.tokens.as_slice())
+    }
+
+    fn pos_span(&self, pos: usize) -> peg::RuleResult<SourceSpan> {
+        peg::RuleResult::Matched(
+            pos,
+            match self.tokens.get(pos) {
+                Some(token) => token.span,
+                None => SourceSpan::new(self.source.len().into(), 0.into()),
+            },
+        )
     }
 }
 
