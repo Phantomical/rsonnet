@@ -12,8 +12,8 @@ pub struct ExprRef(pub usize);
 pub struct ScopeRef(pub usize);
 
 #[derive(Clone, Debug)]
-pub struct Param<'p> {
-    pub name: Spanned<&'p str>,
+pub struct Param {
+    pub name: Spanned<String>,
     pub value: ExprRef,
     pub span: SourceSpan,
 }
@@ -27,25 +27,13 @@ pub struct NamedField {
 }
 
 #[derive(Clone, Debug)]
-pub enum Field<'p> {
-    /// A field within the object
-    Named(NamedField),
-    /// A local variable within the object
-    Local(Param<'p>),
-    /// An expression that must be evaluated when expanding the object. It has
-    /// no side effects but if it evaluates to an error then so does the entire
-    /// object.
-    Effect(ExprRef),
-}
-
-#[derive(Clone, Debug)]
-pub struct Expr<'p> {
+pub struct Expr {
     pub span: SourceSpan,
-    pub data: ExprData<'p>,
+    pub data: ExprData,
 }
 
 #[derive(Clone, Debug)]
-pub enum ExprData<'p> {
+pub enum ExprData {
     /// Special variable referring to the standard library.
     Std,
 
@@ -54,8 +42,8 @@ pub enum ExprData<'p> {
     False,
     ObjSelf,
     Super,
-    Ident(Cow<'p, str>),
-    String(Cow<'p, str>),
+    Ident(Cow<'static, str>),
+    String(Cow<'static, str>),
     Number(f64),
     Error(ExprRef),
 
@@ -73,7 +61,7 @@ pub enum ExprData<'p> {
     },
 
     Locals {
-        locals: Vec<Param<'p>>,
+        locals: Vec<Param>,
         expr: ExprRef,
     },
     Object {
@@ -92,7 +80,7 @@ pub enum ExprData<'p> {
     ObjectComp {
         field: ExprRef,
         value: ExprRef,
-        var: &'p str,
+        var: Cow<'static, str>,
         seq: ExprRef,
     },
 
@@ -101,7 +89,7 @@ pub enum ExprData<'p> {
     },
 
     Function {
-        params: Vec<Param<'p>>,
+        params: Vec<Param>,
         body: ExprRef,
     },
 
@@ -114,7 +102,7 @@ pub enum ExprData<'p> {
     Call {
         func: ExprRef,
         positional: Vec<ExprRef>,
-        named: Vec<Param<'p>>,
+        named: Vec<Param>,
     },
 
     Not(ExprRef),

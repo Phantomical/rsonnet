@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::borrow::Cow;
 
 use miette::SourceSpan;
@@ -12,16 +10,16 @@ mod irt;
 pub use self::irt::*;
 
 #[derive(Default)]
-pub struct Context<'p> {
-    exprs: Slab<Expr<'p>>,
+pub struct Context {
+    exprs: Slab<Expr>,
 }
 
-impl<'p> Context<'p> {
+impl Context {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn desugar(&mut self, expr: ast::Expr<'p>) -> ExprRef {
+    pub fn desugar(&mut self, expr: ast::Expr) -> ExprRef {
         let empty = SourceSpan::new(0.into(), 0.into());
         let std = self.mkexpr(empty, ExprData::Std);
 
@@ -43,17 +41,17 @@ impl<'p> Context<'p> {
         )
     }
 
-    pub fn expr(&self, index: ExprRef) -> &Expr<'p> {
+    pub fn expr(&self, index: ExprRef) -> &Expr {
         &self.exprs[index.0]
     }
 }
 
-impl<'p> Context<'p> {
-    fn mkexpr(&mut self, span: SourceSpan, data: ExprData<'p>) -> ExprRef {
+impl Context {
+    fn mkexpr(&mut self, span: SourceSpan, data: ExprData) -> ExprRef {
         ExprRef(self.exprs.insert(Expr { span, data }))
     }
 
-    fn desugar_expr(&mut self, expr: ast::Expr<'p>, in_obj: bool) -> ExprRef {
+    fn desugar_expr(&mut self, expr: ast::Expr, in_obj: bool) -> ExprRef {
         let expr_span = expr.span();
 
         match expr {
@@ -72,9 +70,10 @@ impl<'p> Context<'p> {
                     in_obj,
                 ),
             },
-            ast::Expr::Variable(ident) => {
-                self.mkexpr(ident.span(), ExprData::Ident(ident.text().into()))
-            }
+            ast::Expr::Variable(ident) => self.mkexpr(
+                ident.span(),
+                ExprData::Ident(ident.text().to_owned().into()),
+            ),
             ast::Expr::Object(ast::Object::Plain(object)) => {
                 let mut locals = Vec::new();
                 let mut effects = Vec::new();
@@ -94,7 +93,7 @@ impl<'p> Context<'p> {
                     let span = object.span;
 
                     locals.push(Param {
-                        name: Spanned::new("$", span),
+                        name: Spanned::new("$".to_owned(), span),
                         value: self.mkexpr(span, ExprData::ObjSelf),
                         span,
                     });
@@ -125,7 +124,7 @@ impl<'p> Context<'p> {
 
                         vars.push(spec.var.clone());
                         locals.push(Param {
-                            name: Spanned::new(spec.var.text(), spec.var.span()),
+                            name: Spanned::new(spec.var.text().to_owned(), spec.var.span()),
                             value: elem,
                             span: spec.var.span(),
                         });
@@ -177,7 +176,7 @@ impl<'p> Context<'p> {
                     ExprData::ObjectComp {
                         field,
                         value,
-                        var: "$arr",
+                        var: "$arr".into(),
                         seq,
                     },
                 )
@@ -296,7 +295,10 @@ impl<'p> Context<'p> {
             }
             ast::Expr::Access { source, field } => {
                 let expr = self.desugar_expr(*source, in_obj);
-                let field = self.mkexpr(field.span(), ExprData::String(field.text().into()));
+                let field = self.mkexpr(
+                    field.span(),
+                    ExprData::String(field.text().to_owned().into()),
+                );
 
                 self.mkexpr(expr_span, ExprData::Index { expr, index: field })
             }
@@ -457,7 +459,7 @@ impl<'p> Context<'p> {
                     .into_iter()
                     .map(|arg| Param {
                         span: arg.span(),
-                        name: Spanned::new(arg.name.text(), arg.name.span()),
+                        name: Spanned::new(arg.name.text().to_owned(), arg.name.span()),
                         value: self.desugar_expr(arg.value, in_obj),
                     })
                     .collect();
@@ -487,7 +489,7 @@ impl<'p> Context<'p> {
         }
     }
 
-    fn desugar_assert(&mut self, assert: ast::Assert<'p>) -> ExprRef {
+    fn desugar_assert(&mut self, assert: ast::Assert) -> ExprRef {
         let message = match assert.message {
             Some(message) => message,
             None => Box::new(ast::Expr::String(ast::String::new(
@@ -511,7 +513,7 @@ impl<'p> Context<'p> {
         )
     }
 
-    fn desugar_field(&mut self, field: ast::Field<'p>, in_obj: bool) -> NamedField {
+    fn desugar_field(&mut self, field: ast::Field, in_obj: bool) -> NamedField {
         match field {
             ast::Field::Function {
                 name,
@@ -594,17 +596,17 @@ impl<'p> Context<'p> {
         }
     }
 
-    fn desugar_bind(&mut self, bind: ast::Bind<'p>, in_obj: bool) -> Param<'p> {
+    fn desugar_bind(&mut self, bind: ast::Bind, in_obj: bool) -> Param {
         let span = bind.span();
 
         match bind {
             ast::Bind::Var(ast::BindVar { name, expr }) => Param {
-                name: Spanned::new(name.text(), name.span()),
+                name: Spanned::new(name.text().to_owned(), name.span()),
                 value: self.desugar_expr(expr, in_obj),
                 span,
             },
             ast::Bind::Fn(ast::BindFn { name, params, expr }) => Param {
-                name: Spanned::new(name.text(), name.span()),
+                name: Spanned::new(name.text().to_owned(), name.span()),
                 value: self.desugar_expr(
                     ast::Expr::FnDef {
                         params,
@@ -618,9 +620,9 @@ impl<'p> Context<'p> {
         }
     }
 
-    fn desugar_param(&mut self, param: ast::Param<'p>, in_obj: bool) -> Param<'p> {
+    fn desugar_param(&mut self, param: ast::Param, in_obj: bool) -> Param {
         let span = param.span();
-        let name = param.name.text();
+        let name = param.name.text().to_owned();
 
         match param.default {
             Some(default) => Param {
@@ -644,7 +646,7 @@ impl<'p> Context<'p> {
         }
     }
 
-    fn desugar_arrcomp(&mut self, mut comp: RawArrayComp<'p>, in_obj: bool) -> ExprRef {
+    fn desugar_arrcomp(&mut self, mut comp: RawArrayComp, in_obj: bool) -> ExprRef {
         let Some(spec) = comp.spec.pop() else {
             return self.desugar_expr(
                 ast::Expr::Array(ast::Array::Plain(ast::ArrayPlain {
