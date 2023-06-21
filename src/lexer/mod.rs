@@ -66,11 +66,23 @@ impl<'p> Token<'p> {
     }
 
     pub fn is_opening(&self) -> bool {
-        matches!(self, Self::Symbol { symbol: '{' | '[' | '(', .. })
+        matches!(
+            self,
+            Self::Symbol {
+                symbol: '{' | '[' | '(',
+                ..
+            }
+        )
     }
 
     pub fn is_closing(&self) -> bool {
-        matches!(self, Self::Symbol { symbol: '}' | ']' | ')', .. })
+        matches!(
+            self,
+            Self::Symbol {
+                symbol: '}' | ']' | ')',
+                ..
+            }
+        )
     }
 }
 
