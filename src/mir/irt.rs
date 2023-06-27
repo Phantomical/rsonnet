@@ -1,21 +1,52 @@
 use std::borrow::Cow;
 
+use gc_arena_derive::Collect;
 use miette::SourceSpan;
 
-pub use crate::parse::Spanned;
 use crate::parse::Visibility;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ExprRef(pub usize);
+#[derive(Copy, Clone, Debug, Collect)]
+#[collect(require_static)]
+pub struct Span {
+    file: usize,
+    span: SourceSpan,
+}
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ScopeRef(pub usize);
+impl Span {
+    pub fn new(file: usize, span: SourceSpan) -> Self {
+        Self { file, span }
+    }
+
+    pub fn file(&self) -> usize {
+        self.file
+    }
+
+    pub fn span(&self) -> SourceSpan {
+        self.span
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Spanned<T> {
+    pub item: T,
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(item: T, span: Span) -> Self {
+        Self { item, span }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Collect)]
+#[collect(require_static)]
+pub struct ExprRef(pub usize);
 
 #[derive(Clone, Debug)]
 pub struct Param {
     pub name: Spanned<String>,
     pub value: ExprRef,
-    pub span: SourceSpan,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
@@ -23,12 +54,12 @@ pub struct NamedField {
     pub field: ExprRef,
     pub vis: Visibility,
     pub value: ExprRef,
-    pub span: SourceSpan,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
 pub struct Expr {
-    pub span: SourceSpan,
+    pub span: Span,
     pub data: ExprData,
 }
 
@@ -40,7 +71,7 @@ pub enum ExprData {
     Null,
     True,
     False,
-    ObjSelf,
+    This,
     Super,
     Ident(Cow<'static, str>),
     String(Cow<'static, str>),
@@ -108,7 +139,7 @@ pub enum ExprData {
     Not(ExprRef),
     Neg(ExprRef),
     Pos(ExprRef),
-    Tilde(ExprRef),
+    BitNot(ExprRef),
 
     Mul(ExprRef, ExprRef),
     Div(ExprRef, ExprRef),

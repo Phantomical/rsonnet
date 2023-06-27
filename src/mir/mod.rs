@@ -9,36 +9,18 @@ mod irt;
 
 pub use self::irt::*;
 
-#[derive(Default)]
+/// A fully desugared AST for a jsonnet source file.
 pub struct Context {
     exprs: Slab<Expr>,
 }
 
 impl Context {
     pub fn new() -> Self {
-        Self::default()
+        Self { exprs: Slab::new() }
     }
 
-    pub fn desugar(&mut self, expr: ast::Expr) -> ExprRef {
-        let empty = SourceSpan::new(0.into(), 0.into());
-        let std = self.mkexpr(empty, ExprData::Std);
-
-        self.desugar_expr(
-            ast::Expr::Local {
-                locals: vec![Spanned::new(
-                    ast::Bind::Var(ast::BindVar {
-                        name: ast::Ident::new("std", empty),
-                        expr: ast::Expr::Embed {
-                            index: std,
-                            span: empty,
-                        },
-                    }),
-                    empty,
-                )],
-                next: Box::new(expr),
-            },
-            false,
-        )
+    pub fn desugar(&mut self, file: usize, expr: ast::Expr) -> ExprRef {
+        ContextBuilder { ctx: self, file }.desugar(expr)
     }
 
     pub fn expr(&self, index: ExprRef) -> &Expr {
@@ -46,9 +28,25 @@ impl Context {
     }
 }
 
-impl Context {
+struct ContextBuilder<'ctx> {
+    ctx: &'ctx mut Context,
+    file: usize,
+}
+
+impl<'ctx> ContextBuilder<'ctx> {
+    fn mkspan(&self, span: SourceSpan) -> Span {
+        Span::new(self.file, span)
+    }
+
     fn mkexpr(&mut self, span: SourceSpan, data: ExprData) -> ExprRef {
-        ExprRef(self.exprs.insert(Expr { span, data }))
+        ExprRef(self.ctx.exprs.insert(Expr {
+            span: self.mkspan(span),
+            data,
+        }))
+    }
+
+    fn desugar(&mut self, expr: ast::Expr) -> ExprRef {
+        self.desugar_expr(expr, false)
     }
 
     fn desugar_expr(&mut self, expr: ast::Expr, in_obj: bool) -> ExprRef {
@@ -59,7 +57,7 @@ impl Context {
             ast::Expr::Null(span) => self.mkexpr(span, ExprData::Null),
             ast::Expr::True(span) => self.mkexpr(span, ExprData::True),
             ast::Expr::False(span) => self.mkexpr(span, ExprData::False),
-            ast::Expr::SelfT(span) => self.mkexpr(span, ExprData::ObjSelf),
+            ast::Expr::SelfT(span) => self.mkexpr(span, ExprData::This),
             ast::Expr::String(string) => {
                 self.mkexpr(string.span(), ExprData::String(string.into_value().into()))
             }
@@ -93,9 +91,9 @@ impl Context {
                     let span = object.span;
 
                     locals.push(Param {
-                        name: Spanned::new("$".to_owned(), span),
-                        value: self.mkexpr(span, ExprData::ObjSelf),
-                        span,
+                        name: Spanned::new("$".to_owned(), self.mkspan(span)),
+                        value: self.mkexpr(span, ExprData::This),
+                        span: self.mkspan(span),
                     });
                 }
 
@@ -124,9 +122,12 @@ impl Context {
 
                         vars.push(spec.var.clone());
                         locals.push(Param {
-                            name: Spanned::new(spec.var.text().to_owned(), spec.var.span()),
+                            name: Spanned::new(
+                                spec.var.text().to_owned(),
+                                self.mkspan(spec.var.span()),
+                            ),
                             value: elem,
-                            span: spec.var.span(),
+                            span: self.mkspan(spec.var.span()),
                         });
 
                         index += 1;
@@ -361,8 +362,41 @@ impl Context {
                     ast::BinOp::And => self.mkexpr(span, ExprData::And(lhs, rhs)),
                     ast::BinOp::Xor => self.mkexpr(span, ExprData::Xor(lhs, rhs)),
                     ast::BinOp::Or => self.mkexpr(span, ExprData::Or(lhs, rhs)),
-                    ast::BinOp::LAnd => self.mkexpr(span, ExprData::LAnd(lhs, rhs)),
-                    ast::BinOp::LOr => self.mkexpr(span, ExprData::LOr(lhs, rhs)),
+
+                    ast::BinOp::LAnd => self.desugar_expr(
+                        ast::Expr::call_path(
+                            &["std", "builtins", "logicalAnd"],
+                            vec![
+                                ast::Expr::Embed {
+                                    index: lhs,
+                                    span: lhs_span,
+                                },
+                                ast::Expr::Embed {
+                                    index: rhs,
+                                    span: rhs_span,
+                                },
+                            ],
+                            span,
+                        ),
+                        in_obj,
+                    ),
+                    ast::BinOp::LOr => self.desugar_expr(
+                        ast::Expr::call_path(
+                            &["std", "builtins", "logicalOr"],
+                            vec![
+                                ast::Expr::Embed {
+                                    index: lhs,
+                                    span: lhs_span,
+                                },
+                                ast::Expr::Embed {
+                                    index: rhs,
+                                    span: rhs_span,
+                                },
+                            ],
+                            span,
+                        ),
+                        in_obj,
+                    ),
 
                     ast::BinOp::Mod => self.desugar_expr(
                         ast::Expr::call_path(
@@ -444,7 +478,7 @@ impl Context {
                     ast::UnaryOp::Not => self.mkexpr(span, ExprData::Not(expr)),
                     ast::UnaryOp::Neg => self.mkexpr(span, ExprData::Neg(expr)),
                     ast::UnaryOp::Pos => self.mkexpr(span, ExprData::Pos(expr)),
-                    ast::UnaryOp::Tilde => self.mkexpr(span, ExprData::Tilde(expr)),
+                    ast::UnaryOp::Tilde => self.mkexpr(span, ExprData::BitNot(expr)),
                 }
             }
             ast::Expr::FnCall { func, args } => {
@@ -458,8 +492,11 @@ impl Context {
                     .named
                     .into_iter()
                     .map(|arg| Param {
-                        span: arg.span(),
-                        name: Spanned::new(arg.name.text().to_owned(), arg.name.span()),
+                        span: self.mkspan(arg.span()),
+                        name: Spanned::new(
+                            arg.name.text().to_owned(),
+                            self.mkspan(arg.name.span()),
+                        ),
                         value: self.desugar_expr(arg.value, in_obj),
                     })
                     .collect();
@@ -590,7 +627,7 @@ impl Context {
                     field,
                     vis,
                     value,
-                    span,
+                    span: self.mkspan(span),
                 }
             }
         }
@@ -601,12 +638,12 @@ impl Context {
 
         match bind {
             ast::Bind::Var(ast::BindVar { name, expr }) => Param {
-                name: Spanned::new(name.text().to_owned(), name.span()),
+                name: Spanned::new(name.text().to_owned(), self.mkspan(name.span())),
                 value: self.desugar_expr(expr, in_obj),
-                span,
+                span: self.mkspan(span),
             },
             ast::Bind::Fn(ast::BindFn { name, params, expr }) => Param {
-                name: Spanned::new(name.text().to_owned(), name.span()),
+                name: Spanned::new(name.text().to_owned(), self.mkspan(name.span())),
                 value: self.desugar_expr(
                     ast::Expr::FnDef {
                         params,
@@ -615,7 +652,7 @@ impl Context {
                     },
                     in_obj,
                 ),
-                span,
+                span: self.mkspan(span),
             },
         }
     }
@@ -626,8 +663,8 @@ impl Context {
 
         match param.default {
             Some(default) => Param {
-                span,
-                name: Spanned::new(name, param.name.span()),
+                span: self.mkspan(span),
+                name: Spanned::new(name, self.mkspan(param.name.span())),
                 value: self.desugar_expr(default, in_obj),
             },
             None => {
@@ -638,9 +675,9 @@ impl Context {
                 let error = self.mkexpr(span, ExprData::Error(message));
 
                 Param {
-                    name: Spanned::new(name, span),
+                    name: Spanned::new(name, self.mkspan(span)),
                     value: error,
-                    span,
+                    span: self.mkspan(span),
                 }
             }
         }
@@ -672,7 +709,7 @@ impl Context {
                         default: None,
                     }],
                     body: Box::new(ast::Expr::Local {
-                        locals: vec![Spanned::new(
+                        locals: vec![ast::Spanned::new(
                             ast::Bind::Var(ast::BindVar {
                                 name: spec.var,
                                 expr: ast::Expr::index(
@@ -712,7 +749,7 @@ impl Context {
 
                 return self.desugar_expr(
                     ast::Expr::Local {
-                        locals: vec![Spanned::new(
+                        locals: vec![ast::Spanned::new(
                             ast::Bind::Var(ast::BindVar {
                                 name: ast::Ident::new("$arr", src_span),
                                 expr: *spec.expr,
