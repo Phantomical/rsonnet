@@ -165,7 +165,7 @@ pub enum Array<'p> {
 pub struct Slice<'p> {
     pub expr: Box<Expr<'p>>,
     pub params: Vec<Option<Expr<'p>>>,
-    /// Note: only covers the [<e> : <e> : <e>] segment
+    /// Note: only covers the `[<e> : <e> : <e>]` segment
     pub span: SourceSpan,
 }
 
